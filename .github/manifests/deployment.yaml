@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: NAMESPACE
+  name: APP_NAME
+  labels:
+    app: APP_NAME
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: APP_NAME
+  template:
+    metadata:
+      labels:
+        app: APP_NAME
+    spec:
+      containers:
+        - name: github-api-server
+          image: ECR_REPO:IMAGE_TAG
+          ports:
+            - containerPort: CONTAINER_PORT

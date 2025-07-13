@@ -1,0 +1,70 @@
+name: Build and Deploy to EKS
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    types: [ closed ]
+    branches: [ main ]
+    # PR이 main에 병합될 때만 동작
+    if: github.event.pull_request.merged == true
+
+jobs:
+  build-and-deploy:
+    runs-on: [self-hosted, arc] 
+    environment: github-api-server
+
+    permissions:
+      id-token: write 
+      contents: read
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }} 
+      ECR_REPO: ${{ vars.ECR_REPO }}
+      CLUSTER_NAME: ${{ vars.CLUSTER_NAME }}
+      APP_NAME: ${{ vars.APP_NAME }}
+      NAMESPACE: ${{ vars.NAMESPACE }}
+      CONTAINER_PORT: ${{ vars.CONTAINER_PORT }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install AWS CLI v2 manually
+        run: |
+          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+          unzip awscliv2.zip
+          sudo ./aws/install
+          aws --version
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ vars.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_OIDC_ROLE }}
+          audience: sts.amazonaws.com
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and Push Docker Image
+        run: |
+          IMAGE_TAG=${{ github.sha }}
+          docker build -t ${{ vars.ECR_REPO }}:$IMAGE_TAG .
+          docker push ${{ vars.ECR_REPO }}:$IMAGE_TAG
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: latest
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig --name ${{ vars.CLUSTER_NAME }} --region ${{ vars.AWS_REGION }}
+
+      - name: Deploy to Kubernetes
+        run: |
+          sed -e "s|IMAGE_TAG|${{ github.sha }}|g" \
+              -e "s|ECR_REPO|${{ vars.ECR_REPO }}|g" \
+              -e "s|APP_NAME|${{ vars.APP_NAME }}|g" \
+              -e "s|NAMESPACE|${{ vars.NAMESPACE }}|g" \
+              -e "s|CONTAINER_PORT|${{ vars.CONTAINER_PORT }}|g" \
+              $GITHUB_WORKSPACE/.github/manifests/deployment.yaml | kubectl apply -f -
